@@ -27,4 +27,7 @@ program.action(async () => {
   await interactiveMode();
 });
 
-await program.parseAsync();
+program.parseAsync().catch((err) => {
+  console.error(err.message);
+  process.exit(1);
+});

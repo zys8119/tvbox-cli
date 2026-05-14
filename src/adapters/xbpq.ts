@@ -96,7 +96,14 @@ export class XBPQAdapter extends BaseSiteAdapter {
 
   async getDetail(videoId: string): Promise<VideoDetail> {
     const baseUrl = this.getBaseUrl();
-    const url = videoId.startsWith('http') ? videoId : `${baseUrl}/voddetail/${videoId}.html`;
+    let url: string;
+    if (videoId.startsWith('http')) {
+      url = videoId;
+    } else if (videoId.startsWith('/')) {
+      url = `${baseUrl}${videoId}`;
+    } else {
+      url = `${baseUrl}/voddetail/${videoId}/`;
+    }
     const resp = await this.http.get(url, { headers: this.getHeaders() });
     return this.parseDetailPage(resp.data, videoId);
   }
@@ -104,6 +111,29 @@ export class XBPQAdapter extends BaseSiteAdapter {
   private parseListPage(html: string): VideoItem[] {
     const $ = cheerio.load(html);
     const items: VideoItem[] = [];
+
+    // Search result cards (module-card-item)
+    const cardItems = $('.module-card-item');
+    if (cardItems.length > 0) {
+      cardItems.each((_, el) => {
+        const $el = $(el);
+        const $link = $el.find('a[href*="vod"]').first();
+        const href = $link.attr('href') ?? '';
+        const id = this.extractId(href);
+        const name = $el.find('.module-card-item-title, .module-card-item-info .title').first().text().trim()
+          || $link.attr('title')?.trim()
+          || '';
+        const pic = $el.find('img').first().attr('data-src')
+          ?? $el.find('img').first().attr('src')
+          ?? '';
+        const remarks = $el.find('.module-item-note, .module-card-item-class').first().text().trim();
+
+        if (name && id) {
+          items.push({ id, name, pic, remarks, siteKey: this.site.key });
+        }
+      });
+      return items;
+    }
 
     // Common selectors for CMS-style sites
     const selectors = [
@@ -205,8 +235,11 @@ export class XBPQAdapter extends BaseSiteAdapter {
   }
 
   private extractId(href: string): string {
-    const match = href.match(/(\d+)\.html/);
+    // Match /voddetail/44693/ or /voddetail/44693.html
+    const match = href.match(/voddetail\/(\d+)/);
     if (match) return match[1];
+    const match2 = href.match(/(\d+)\.html/);
+    if (match2) return match2[1];
     const parts = href.split('/').filter(Boolean);
     return parts[parts.length - 1]?.replace('.html', '') ?? href;
   }
