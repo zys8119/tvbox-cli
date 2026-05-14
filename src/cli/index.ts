@@ -6,6 +6,7 @@ import { detailCommand } from './commands/detail.js';
 import { playCommand } from './commands/play.js';
 import { liveCommand } from './commands/live.js';
 import { parseCommand } from './commands/parse.js';
+import { configCommand } from './commands/config.js';
 import { interactiveMode } from './interactive.js';
 import { setGlobalProxy } from '../index.js';
 
@@ -30,6 +31,7 @@ detailCommand(program);
 playCommand(program);
 liveCommand(program);
 parseCommand(program);
+configCommand(program);
 
 program.action(async () => {
   const opts = program.opts();

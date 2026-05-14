@@ -31,12 +31,16 @@ export class SearchService {
         try {
           const adapter = this.siteService.getAdapter(site.key);
           if (!adapter.supported) return [];
-          return await Promise.race([
-            adapter.search(keyword),
-            new Promise<VideoItem[]>((_, reject) =>
-              setTimeout(() => reject(new Error('timeout')), timeout)
-            ),
-          ]);
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), timeout);
+          try {
+            const result = await adapter.search(keyword);
+            clearTimeout(timer);
+            return result;
+          } catch {
+            clearTimeout(timer);
+            return [];
+          }
         } catch {
           return [];
         }

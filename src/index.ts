@@ -1,5 +1,6 @@
 import { createHttpClient, type ProxyConfig } from './utils/http.js';
 import { ConfigLoader } from './config/loader.js';
+import { Store } from './store/index.js';
 import { SiteService } from './services/site.service.js';
 import { SearchService } from './services/search.service.js';
 import { DetailService } from './services/detail.service.js';
@@ -18,6 +19,7 @@ export function getGlobalProxy(): ProxyConfig | undefined {
 }
 
 export interface Services {
+  store: Store;
   config: ConfigLoader;
   siteService: SiteService;
   searchService: SearchService;
@@ -32,8 +34,26 @@ export interface CreateServicesOptions {
   proxy?: ProxyConfig;
 }
 
+let _store: Store | undefined;
+
+export function getStore(): Store {
+  if (!_store) {
+    _store = new Store();
+  }
+  return _store;
+}
+
 export function createServices(options?: CreateServicesOptions): Services {
-  const config = new ConfigLoader(options?.configPath);
+  const store = getStore();
+
+  // Determine config source: explicit path > active config from store
+  let configSource: string | undefined = options?.configPath;
+  if (!configSource) {
+    const activeConfig = store.getActiveConfig();
+    configSource = activeConfig.path;
+  }
+
+  const config = new ConfigLoader(configSource);
   const proxy = options?.proxy ?? _globalProxy;
   const http = createHttpClient({ proxy });
 
@@ -45,6 +65,7 @@ export function createServices(options?: CreateServicesOptions): Services {
   const parseService = new ParseService(config, http);
 
   return {
+    store,
     config,
     siteService,
     searchService,
@@ -56,6 +77,7 @@ export function createServices(options?: CreateServicesOptions): Services {
 }
 
 export { ConfigLoader } from './config/loader.js';
+export { Store } from './store/index.js';
 export { SiteService } from './services/site.service.js';
 export { SearchService } from './services/search.service.js';
 export { DetailService } from './services/detail.service.js';

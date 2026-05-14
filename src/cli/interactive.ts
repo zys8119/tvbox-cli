@@ -1,7 +1,6 @@
 import * as readline from 'readline';
 import chalk from 'chalk';
-import ora from 'ora';
-import { createServices, type Services } from '../index.js';
+import { createServices, getStore, type Services } from '../index.js';
 import { formatSiteList, formatVideoList, formatCategories, formatChannels } from '../utils/format.js';
 import type { VideoItem } from '../types/index.js';
 
@@ -13,13 +12,15 @@ export async function interactiveMode() {
     terminal: true,
   });
 
-  const ask = (q: string) => new Promise<string>((resolve) => {
+  let running = true;
+
+  const ask = (q: string) => new Promise<string>((resolve, reject) => {
+    if (!running) return reject(new Error('closed'));
     rl.question(q, (answer) => resolve(answer));
   });
 
   rl.on('close', () => {
-    console.log(chalk.dim('\n  再见!\n'));
-    process.exit(0);
+    running = false;
   });
 
   console.log(chalk.bold('\n  TVBox CLI - 交互模式\n'));
@@ -27,20 +28,19 @@ export async function interactiveMode() {
 
   let lastResults: VideoItem[] = [];
 
-  while (true) {
+  while (running) {
     let input: string;
     try {
       input = await ask(chalk.cyan('  tvbox> '));
     } catch {
       break;
     }
+    if (!running) break;
     const trimmed = input.trim();
 
     if (!trimmed) continue;
     if (trimmed === 'quit' || trimmed === 'exit' || trimmed === 'q') {
-      console.log(chalk.dim('\n  再见!\n'));
-      rl.close();
-      process.exit(0);
+      break;
     }
 
     const [cmd, ...args] = trimmed.split(/\s+/);
@@ -84,8 +84,22 @@ export async function interactiveMode() {
           await handleParse(services, args);
           break;
 
+        case 'fav':
+        case 'favorite':
+          handleFav(services, args, lastResults);
+          break;
+
+        case 'history':
+        case 'hist':
+          handleHistory(services);
+          break;
+
+        case 'config':
+        case 'cfg':
+          handleConfig(args);
+          break;
+
         default:
-          // Treat as search if it doesn't match a command
           lastResults = await handleSearch(services, [trimmed]);
           break;
       }
@@ -93,6 +107,9 @@ export async function interactiveMode() {
       console.log(chalk.red(`  错误: ${e.message}\n`));
     }
   }
+
+  rl.close();
+  console.log(chalk.dim('\n  再见!\n'));
 }
 
 function printHelp() {
@@ -108,6 +125,13 @@ function printHelp() {
   console.log('  live                    直播源');
   console.log('  live <频道名>           播放直播频道');
   console.log('  parse <url>             解析视频URL');
+  console.log('  fav                     查看收藏');
+  console.log('  fav add <序号>          收藏搜索结果');
+  console.log('  fav rm <序号>           取消收藏');
+  console.log('  history                 查看观看记录');
+  console.log('  config                  查看配置列表');
+  console.log('  config add <名称> <路径> 添加配置');
+  console.log('  config use <名称>       切换配置');
   console.log('  help                    显示帮助');
   console.log('  quit                    退出');
   console.log();
@@ -143,14 +167,12 @@ async function handleCategories(services: Services, args: string[]) {
   }
 
   if (categoryId) {
-    const spinner = ora('加载列表...').start();
+    console.log(chalk.dim('  加载列表...'));
     const items = await adapter.getList(categoryId, page);
-    spinner.stop();
     formatVideoList(items);
   } else {
-    const spinner = ora('加载分类...').start();
+    console.log(chalk.dim('  加载分类...'));
     const categories = await adapter.getCategories();
-    spinner.stop();
     formatCategories(categories);
   }
 }
@@ -172,9 +194,8 @@ async function handleSearch(services: Services, args: string[]): Promise<VideoIt
     keyword = args.join(' ');
   }
 
-  const spinner = ora(`搜索 "${keyword}"...`).start();
+  console.log(chalk.dim(`  搜索 "${keyword}"...`));
   const results = await services.searchService.searchAll(keyword, { siteKeys });
-  spinner.stop();
   formatVideoList(results);
   return results;
 }
@@ -184,9 +205,8 @@ async function handleDetail(services: Services, args: string[], lastResults: Vid
     const idx = parseInt(args[0]) - 1;
     if (idx >= 0 && idx < lastResults.length) {
       const item = lastResults[idx];
-      const spinner = ora('加载详情...').start();
+      console.log(chalk.dim('  加载详情...'));
       const detail = await services.detailService.getDetail(item.siteKey, item.id);
-      spinner.stop();
       printDetail(detail);
       return;
     }
@@ -199,9 +219,8 @@ async function handleDetail(services: Services, args: string[], lastResults: Vid
     return;
   }
 
-  const spinner = ora('加载详情...').start();
+  console.log(chalk.dim('  加载详情...'));
   const detail = await services.detailService.getDetail(args[0], args[1]);
-  spinner.stop();
   printDetail(detail);
 }
 
@@ -221,7 +240,7 @@ function printDetail(detail: any) {
 
   if (detail.playList?.length > 0) {
     console.log(chalk.bold('\n  播放列表:'));
-    detail.playList.forEach((group: any, gi: number) => {
+    detail.playList.forEach((group: any) => {
       console.log(chalk.cyan(`\n  [${group.name}] (${group.episodes.length}集)`));
       const displayEps = group.episodes.slice(0, 20);
       displayEps.forEach((ep: any, ei: number) => {
@@ -247,10 +266,8 @@ async function handlePlay(services: Services, args: string[], lastResults: Video
     const idx = parseInt(url) - 1;
     if (idx >= 0 && idx < lastResults.length) {
       const item = lastResults[idx];
-      // Get detail and play first episode
-      const spinner = ora('获取播放地址...').start();
+      console.log(chalk.dim('  获取播放地址...'));
       const detail = await services.detailService.getDetail(item.siteKey, item.id);
-      spinner.stop();
 
       if (detail.playList.length > 0 && detail.playList[0].episodes.length > 0) {
         url = detail.playList[0].episodes[0].url;
@@ -278,9 +295,8 @@ async function handlePlay(services: Services, args: string[], lastResults: Video
 }
 
 async function handleLive(services: Services, args: string[]) {
-  const spinner = ora('加载直播源...').start();
+  console.log(chalk.dim('  加载直播源...'));
   const channels = await services.liveService.getChannels();
-  spinner.stop();
 
   if (channels.length === 0) {
     console.log(chalk.yellow('\n  没有可用的直播源\n'));
@@ -321,13 +337,123 @@ async function handleParse(services: Services, args: string[]) {
   }
 
   const url = args[0];
-  const spinner = ora('解析中...').start();
+  console.log(chalk.dim('  解析中...'));
   const result = await services.parseService.parse(url);
-  spinner.stop();
 
   if (result) {
     console.log(chalk.green(`\n  解析成功: ${result.url}\n`));
   } else {
     console.log(chalk.yellow('\n  解析失败\n'));
   }
+}
+
+function handleFav(_services: Services, args: string[], lastResults: VideoItem[]) {
+  const store = getStore();
+
+  if (args.length === 0) {
+    const favs = store.getFavorites();
+    if (favs.length === 0) {
+      console.log(chalk.yellow('\n  收藏夹为空\n'));
+      return;
+    }
+    console.log(chalk.bold(`\n  收藏夹 (${favs.length}):\n`));
+    favs.forEach((f, i) => {
+      console.log(`  ${chalk.gray(`${i + 1}.`)} ${f.name} ${chalk.cyan(`@${f.siteKey}`)} ${chalk.dim(f.addedAt)}`);
+    });
+    console.log();
+    return;
+  }
+
+  const subCmd = args[0];
+
+  if (subCmd === 'add' && args[1]) {
+    const idx = parseInt(args[1]) - 1;
+    if (idx >= 0 && idx < lastResults.length) {
+      const item = lastResults[idx];
+      store.addFavorite(item.siteKey, item.id, item.name, item.pic);
+      console.log(chalk.green(`  已收藏: ${item.name}`));
+    } else {
+      console.log(chalk.yellow('  序号超出范围'));
+    }
+    return;
+  }
+
+  if (subCmd === 'rm' && args[1]) {
+    const favs = store.getFavorites();
+    const idx = parseInt(args[1]) - 1;
+    if (idx >= 0 && idx < favs.length) {
+      store.removeFavorite(favs[idx].siteKey, favs[idx].videoId);
+      console.log(chalk.green(`  已取消收藏: ${favs[idx].name}`));
+    } else {
+      console.log(chalk.yellow('  序号超出范围'));
+    }
+    return;
+  }
+
+  console.log(chalk.yellow('  用法: fav / fav add <序号> / fav rm <序号>'));
+}
+
+function handleHistory(_services: Services) {
+  const store = getStore();
+  const history = store.getHistory();
+
+  if (history.length === 0) {
+    console.log(chalk.yellow('\n  暂无观看记录\n'));
+    return;
+  }
+
+  console.log(chalk.bold(`\n  观看记录 (${history.length}):\n`));
+  history.forEach((h, i) => {
+    const ep = h.episode ? chalk.dim(` [${h.episode}]`) : '';
+    console.log(`  ${chalk.gray(`${i + 1}.`)} ${h.name}${ep} ${chalk.cyan(`@${h.siteKey}`)} ${chalk.dim(h.watchedAt)}`);
+  });
+  console.log();
+}
+
+function handleConfig(args: string[]) {
+  const store = getStore();
+
+  if (args.length === 0 || args[0] === 'ls') {
+    const configs = store.getConfigs();
+    const active = store.getActiveConfigName();
+    console.log(chalk.bold('\n  配置列表:\n'));
+    configs.forEach((c, i) => {
+      const marker = c.name === active ? chalk.green('●') : ' ';
+      const typeLabel = c.type === 'remote' ? chalk.cyan('[远程]') : chalk.dim('[本地]');
+      console.log(`  ${marker} ${chalk.gray(`${i + 1}.`)} ${chalk.bold(c.name)} ${typeLabel} ${chalk.dim(c.path)}`);
+    });
+    console.log();
+    return;
+  }
+
+  const subCmd = args[0];
+
+  if (subCmd === 'add' && args[1] && args[2]) {
+    const type = args[2].startsWith('http') ? 'remote' : 'local';
+    store.addConfig(args[1], args[2], type as 'local' | 'remote');
+    console.log(chalk.green(`  已添加配置: ${args[1]} [${type}]`));
+    return;
+  }
+
+  if (subCmd === 'use' && args[1]) {
+    try {
+      store.setActiveConfig(args[1]);
+      console.log(chalk.green(`  已切换到: ${args[1]}`));
+    } catch (e: any) {
+      console.log(chalk.red(`  ${e.message}`));
+    }
+    return;
+  }
+
+  if (subCmd === 'rm' && args[1]) {
+    try {
+      store.removeConfig(args[1]);
+      console.log(chalk.green(`  已删除: ${args[1]}`));
+    } catch (e: any) {
+      console.log(chalk.red(`  ${e.message}`));
+    }
+    return;
+  }
+
+  console.log(chalk.yellow('  用法: config [ls] / config add <名称> <路径或URL> / config use <名称> / config rm <名称>'));
 }
