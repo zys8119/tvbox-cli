@@ -7,13 +7,21 @@ import { playCommand } from './commands/play.js';
 import { liveCommand } from './commands/live.js';
 import { parseCommand } from './commands/parse.js';
 import { interactiveMode } from './interactive.js';
+import { setGlobalProxy } from '../index.js';
 
 const program = new Command();
 
 program
   .name('tvbox')
   .description('TVBox CLI - 终端视频源浏览播放工具')
-  .version('1.0.0');
+  .version('0.0.1')
+  .option('--proxy <url>', '网络代理 (如 http://127.0.0.1:7890 或 socks5://127.0.0.1:1080)')
+  .hook('preAction', (thisCommand) => {
+    const opts = thisCommand.opts();
+    if (opts.proxy) {
+      setGlobalProxy({ url: opts.proxy });
+    }
+  });
 
 sitesCommand(program);
 categoriesCommand(program);
@@ -24,6 +32,10 @@ liveCommand(program);
 parseCommand(program);
 
 program.action(async () => {
+  const opts = program.opts();
+  if (opts.proxy) {
+    setGlobalProxy({ url: opts.proxy });
+  }
   await interactiveMode();
 });
 

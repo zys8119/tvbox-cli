@@ -1,4 +1,4 @@
-import { createHttpClient } from './utils/http.js';
+import { createHttpClient, type ProxyConfig } from './utils/http.js';
 import { ConfigLoader } from './config/loader.js';
 import { SiteService } from './services/site.service.js';
 import { SearchService } from './services/search.service.js';
@@ -6,6 +6,16 @@ import { DetailService } from './services/detail.service.js';
 import { PlayerService } from './services/player.service.js';
 import { LiveService } from './services/live.service.js';
 import { ParseService } from './services/parse.service.js';
+
+let _globalProxy: ProxyConfig | undefined;
+
+export function setGlobalProxy(proxy: ProxyConfig | undefined) {
+  _globalProxy = proxy;
+}
+
+export function getGlobalProxy(): ProxyConfig | undefined {
+  return _globalProxy;
+}
 
 export interface Services {
   config: ConfigLoader;
@@ -17,9 +27,15 @@ export interface Services {
   parseService: ParseService;
 }
 
-export function createServices(configPath?: string): Services {
-  const config = new ConfigLoader(configPath);
-  const http = createHttpClient();
+export interface CreateServicesOptions {
+  configPath?: string;
+  proxy?: ProxyConfig;
+}
+
+export function createServices(options?: CreateServicesOptions): Services {
+  const config = new ConfigLoader(options?.configPath);
+  const proxy = options?.proxy ?? _globalProxy;
+  const http = createHttpClient({ proxy });
 
   const siteService = new SiteService(config, http);
   const searchService = new SearchService(siteService, config);
