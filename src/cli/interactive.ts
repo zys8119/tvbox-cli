@@ -7,8 +7,20 @@ import type { VideoItem } from '../types/index.js';
 
 export async function interactiveMode() {
   const services = createServices();
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  const ask = (q: string) => new Promise<string>(resolve => rl.question(q, resolve));
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    terminal: true,
+  });
+
+  const ask = (q: string) => new Promise<string>((resolve) => {
+    rl.question(q, (answer) => resolve(answer));
+  });
+
+  rl.on('close', () => {
+    console.log(chalk.dim('\n  再见!\n'));
+    process.exit(0);
+  });
 
   console.log(chalk.bold('\n  TVBox CLI - 交互模式\n'));
   console.log(chalk.dim('  输入 help 查看命令，输入 quit 退出\n'));
@@ -16,14 +28,19 @@ export async function interactiveMode() {
   let lastResults: VideoItem[] = [];
 
   while (true) {
-    const input = await ask(chalk.cyan('  tvbox> '));
+    let input: string;
+    try {
+      input = await ask(chalk.cyan('  tvbox> '));
+    } catch {
+      break;
+    }
     const trimmed = input.trim();
 
     if (!trimmed) continue;
     if (trimmed === 'quit' || trimmed === 'exit' || trimmed === 'q') {
       console.log(chalk.dim('\n  再见!\n'));
       rl.close();
-      break;
+      process.exit(0);
     }
 
     const [cmd, ...args] = trimmed.split(/\s+/);

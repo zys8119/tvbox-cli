@@ -27,4 +27,4 @@ program.action(async () => {
   await interactiveMode();
 });
 
-program.parse();
+await program.parseAsync();
