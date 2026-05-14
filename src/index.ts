@@ -57,15 +57,19 @@ export async function createServices(options?: CreateServicesOptions): Promise<S
   // Auto-fetch remote config if not cached
   await config.loadAsync();
 
+  const configName = store.getActiveConfigName();
   const proxy = options?.proxy ?? _globalProxy;
   const http = createHttpClient({ proxy });
 
   const siteService = new SiteService(config, http);
-  const searchService = new SearchService(siteService, config);
-  const detailService = new DetailService(siteService);
+  const searchService = new SearchService(siteService, config, store, configName);
+  const detailService = new DetailService(siteService, store, configName);
   const playerService = new PlayerService();
   const liveService = new LiveService(config, http);
   const parseService = new ParseService(config, http);
+
+  // Clean expired cache on startup
+  store.clearExpiredCache();
 
   return {
     store,

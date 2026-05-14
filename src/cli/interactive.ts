@@ -9,7 +9,7 @@ import type { VideoItem } from '../types/index.js';
 export async function interactiveMode() {
   const services = await createServices();
 
-  const commands = ['sites', 'search', 'cat', 'detail', 'play', 'live', 'parse', 'fav', 'history', 'config', 'help', 'quit'];
+  const commands = ['sites', 'search', 'cat', 'detail', 'play', 'live', 'parse', 'fav', 'history', 'config', 'clear', 'help', 'quit'];
   const aliases: Record<string, string> = { s: 'search', d: 'detail', p: 'play', ls: 'sites', h: 'help', q: 'quit', hist: 'history', cfg: 'config' };
 
   const rl = readline.createInterface({
@@ -156,6 +156,10 @@ export async function interactiveMode() {
           handleConfig(args);
           break;
 
+        case 'clear':
+          handleClear(args);
+          break;
+
         default:
           lastResults = await handleSearch(services, [trimmed], signal);
           break;
@@ -188,6 +192,7 @@ function printHelp() {
   console.log('  fav add <序号>      收藏搜索结果');
   console.log('  history             观看记录');
   console.log('  config              配置管理');
+  console.log('  clear [cache|history|all]  清理缓存/历史');
   console.log('  help                显示帮助');
   console.log('  quit                退出');
   console.log();
@@ -858,4 +863,28 @@ function handleConfig(args: string[]) {
   }
 
   console.log(chalk.yellow('  用法: config [ls] / config add <名称> <路径或URL> / config use <名称> / config rm <名称>'));
+}
+
+function handleClear(args: string[]) {
+  const store = getStore();
+  const target = args[0] ?? 'cache';
+
+  switch (target) {
+    case 'cache':
+      store.clearExpiredCache();
+      store.clearAllCache();
+      console.log(chalk.green('  已清理所有搜索和详情缓存'));
+      break;
+    case 'history':
+      store.clearHistory();
+      console.log(chalk.green('  已清理观看记录'));
+      break;
+    case 'all':
+      store.clearAllCache();
+      store.clearHistory();
+      console.log(chalk.green('  已清理所有缓存和观看记录'));
+      break;
+    default:
+      console.log(chalk.yellow('  用法: clear [cache|history|all]'));
+  }
 }

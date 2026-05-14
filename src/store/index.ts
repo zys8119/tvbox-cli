@@ -82,6 +82,25 @@ export class Store {
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS search_cache (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        config_name TEXT NOT NULL,
+        keyword TEXT NOT NULL,
+        results TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(config_name, keyword)
+      );
+
+      CREATE TABLE IF NOT EXISTS detail_cache (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        config_name TEXT NOT NULL,
+        site_key TEXT NOT NULL,
+        video_id TEXT NOT NULL,
+        detail TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(config_name, site_key, video_id)
+      );
     `);
 
     // Ensure default config exists
@@ -206,6 +225,46 @@ export class Store {
       searchTimeout: map['search_timeout'] ? parseInt(map['search_timeout']) : undefined,
       searchConcurrency: map['search_concurrency'] ? parseInt(map['search_concurrency']) : undefined,
     };
+  }
+
+  // Search cache (1 day TTL)
+  getSearchCache(configName: string, keyword: string): any[] | null {
+    const row = this.db.prepare(
+      "SELECT results FROM search_cache WHERE config_name = ? AND keyword = ? AND datetime(created_at, '+1 day') > datetime('now')"
+    ).get(configName, keyword) as { results: string } | undefined;
+    if (!row) return null;
+    return JSON.parse(row.results);
+  }
+
+  setSearchCache(configName: string, keyword: string, results: any[]) {
+    this.db.prepare(
+      'INSERT OR REPLACE INTO search_cache (config_name, keyword, results, created_at) VALUES (?, ?, ?, datetime(\'now\'))'
+    ).run(configName, keyword, JSON.stringify(results));
+  }
+
+  // Detail cache (1 day TTL)
+  getDetailCache(configName: string, siteKey: string, videoId: string): any | null {
+    const row = this.db.prepare(
+      "SELECT detail FROM detail_cache WHERE config_name = ? AND site_key = ? AND video_id = ? AND datetime(created_at, '+1 day') > datetime('now')"
+    ).get(configName, siteKey, videoId) as { detail: string } | undefined;
+    if (!row) return null;
+    return JSON.parse(row.detail);
+  }
+
+  setDetailCache(configName: string, siteKey: string, videoId: string, detail: any) {
+    this.db.prepare(
+      'INSERT OR REPLACE INTO detail_cache (config_name, site_key, video_id, detail, created_at) VALUES (?, ?, ?, ?, datetime(\'now\'))'
+    ).run(configName, siteKey, videoId, JSON.stringify(detail));
+  }
+
+  clearExpiredCache() {
+    this.db.prepare("DELETE FROM search_cache WHERE datetime(created_at, '+1 day') <= datetime('now')").run();
+    this.db.prepare("DELETE FROM detail_cache WHERE datetime(created_at, '+1 day') <= datetime('now')").run();
+  }
+
+  clearAllCache() {
+    this.db.prepare('DELETE FROM search_cache').run();
+    this.db.prepare('DELETE FROM detail_cache').run();
   }
 
   close() {
