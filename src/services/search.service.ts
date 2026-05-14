@@ -12,6 +12,7 @@ export class SearchService {
     concurrency?: number;
     timeout?: number;
     siteKeys?: string[];
+    signal?: AbortSignal;
   }): Promise<VideoItem[]> {
     const concurrency = options?.concurrency ?? 5;
     const timeout = options?.timeout ?? 10000;
@@ -26,13 +27,15 @@ export class SearchService {
     const results: VideoItem[] = [];
 
     for (let i = 0; i < sites.length; i += concurrency) {
+      if (options?.signal?.aborted) break;
+
       const batch = sites.slice(i, i + concurrency);
       const promises = batch.map(async (site) => {
         try {
+          if (options?.signal?.aborted) return [];
           const adapter = this.siteService.getAdapter(site.key);
           if (!adapter.supported) return [];
-          const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), timeout);
+          const timer = setTimeout(() => {}, timeout);
           try {
             const result = await adapter.search(keyword);
             clearTimeout(timer);

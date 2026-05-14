@@ -13,6 +13,20 @@ export async function interactiveMode() {
   });
 
   let running = true;
+  let currentAbort: AbortController | null = null;
+
+  // Ctrl+C cancels current operation instead of exiting
+  rl.on('SIGINT', () => {
+    if (currentAbort) {
+      currentAbort.abort();
+      currentAbort = null;
+      console.log(chalk.yellow('\n  已取消'));
+    } else {
+      // No operation running, show hint
+      console.log(chalk.dim('\n  按 Ctrl+C 取消操作，输入 quit 退出'));
+      rl.prompt();
+    }
+  });
 
   const ask = (q: string) => new Promise<string>((resolve, reject) => {
     if (!running) return reject(new Error('closed'));
@@ -24,7 +38,7 @@ export async function interactiveMode() {
   });
 
   console.log(chalk.bold('\n  TVBox CLI - 交互模式\n'));
-  console.log(chalk.dim('  输入 help 查看命令，输入 quit 退出\n'));
+  console.log(chalk.dim('  输入 help 查看命令，Ctrl+C 取消操作，quit 退出\n'));
 
   let lastResults: VideoItem[] = [];
 
@@ -45,6 +59,10 @@ export async function interactiveMode() {
 
     const [cmd, ...args] = trimmed.split(/\s+/);
 
+    // Create abort controller for this operation
+    currentAbort = new AbortController();
+    const signal = currentAbort.signal;
+
     try {
       switch (cmd) {
         case 'help':
@@ -58,17 +76,17 @@ export async function interactiveMode() {
           break;
 
         case 'cat':
-          await handleCategories(services, args);
+          await handleCategories(services, args, signal);
           break;
 
         case 'search':
         case 's':
-          lastResults = await handleSearch(services, args);
+          lastResults = await handleSearch(services, args, signal);
           break;
 
         case 'detail':
         case 'd':
-          await handleDetail(services, args, lastResults);
+          await handleDetail(services, args, lastResults, signal);
           break;
 
         case 'play':
@@ -77,7 +95,7 @@ export async function interactiveMode() {
           break;
 
         case 'live':
-          await handleLive(services, args);
+          await handleLive(services, args, signal);
           break;
 
         case 'parse':
@@ -100,11 +118,17 @@ export async function interactiveMode() {
           break;
 
         default:
-          lastResults = await handleSearch(services, [trimmed]);
+          lastResults = await handleSearch(services, [trimmed], signal);
           break;
       }
     } catch (e: any) {
-      console.log(chalk.red(`  错误: ${e.message}\n`));
+      if (e.name === 'AbortError' || signal.aborted) {
+        // Already printed cancel message in SIGINT handler
+      } else {
+        console.log(chalk.red(`  错误: ${e.message}\n`));
+      }
+    } finally {
+      currentAbort = null;
     }
   }
 
@@ -150,7 +174,7 @@ async function handleSites(services: Services, args: string[]) {
   }
 }
 
-async function handleCategories(services: Services, args: string[]) {
+async function handleCategories(services: Services, args: string[], signal?: AbortSignal) {
   if (args.length === 0) {
     console.log(chalk.yellow('  用法: cat <站点key> [分类id] [页码]'));
     return;
@@ -168,16 +192,20 @@ async function handleCategories(services: Services, args: string[]) {
 
   if (categoryId) {
     console.log(chalk.dim('  加载列表...'));
+    if (signal?.aborted) return;
     const items = await adapter.getList(categoryId, page);
+    if (signal?.aborted) return;
     formatVideoList(items);
   } else {
     console.log(chalk.dim('  加载分类...'));
+    if (signal?.aborted) return;
     const categories = await adapter.getCategories();
+    if (signal?.aborted) return;
     formatCategories(categories);
   }
 }
 
-async function handleSearch(services: Services, args: string[]): Promise<VideoItem[]> {
+async function handleSearch(services: Services, args: string[], signal?: AbortSignal): Promise<VideoItem[]> {
   if (args.length === 0) {
     console.log(chalk.yellow('  用法: search <关键词> [-s 站点key]'));
     return [];
@@ -195,18 +223,21 @@ async function handleSearch(services: Services, args: string[]): Promise<VideoIt
   }
 
   console.log(chalk.dim(`  搜索 "${keyword}"...`));
-  const results = await services.searchService.searchAll(keyword, { siteKeys });
+  const results = await services.searchService.searchAll(keyword, { siteKeys, signal });
+  if (signal?.aborted) return [];
   formatVideoList(results);
   return results;
 }
 
-async function handleDetail(services: Services, args: string[], lastResults: VideoItem[]) {
+async function handleDetail(services: Services, args: string[], lastResults: VideoItem[], signal?: AbortSignal) {
   if (args.length === 1 && /^\d+$/.test(args[0])) {
     const idx = parseInt(args[0]) - 1;
     if (idx >= 0 && idx < lastResults.length) {
       const item = lastResults[idx];
       console.log(chalk.dim('  加载详情...'));
+      if (signal?.aborted) return;
       const detail = await services.detailService.getDetail(item.siteKey, item.id);
+      if (signal?.aborted) return;
       printDetail(detail);
       return;
     }
@@ -220,7 +251,9 @@ async function handleDetail(services: Services, args: string[], lastResults: Vid
   }
 
   console.log(chalk.dim('  加载详情...'));
+  if (signal?.aborted) return;
   const detail = await services.detailService.getDetail(args[0], args[1]);
+  if (signal?.aborted) return;
   printDetail(detail);
 }
 
@@ -294,9 +327,11 @@ async function handlePlay(services: Services, args: string[], lastResults: Video
   await services.playerService.play(url);
 }
 
-async function handleLive(services: Services, args: string[]) {
+async function handleLive(services: Services, args: string[], signal?: AbortSignal) {
   console.log(chalk.dim('  加载直播源...'));
+  if (signal?.aborted) return;
   const channels = await services.liveService.getChannels();
+  if (signal?.aborted) return;
 
   if (channels.length === 0) {
     console.log(chalk.yellow('\n  没有可用的直播源\n'));
