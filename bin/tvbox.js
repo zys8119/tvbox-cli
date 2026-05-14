@@ -1,2 +1,2 @@
-#!/usr/bin/env tsx
-import '../src/cli/index.js';
+#!/usr/bin/env node
+import '../dist/cli/index.js';
