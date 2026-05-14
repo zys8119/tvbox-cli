@@ -7,10 +7,50 @@ import type { VideoItem } from '../types/index.js';
 
 export async function interactiveMode() {
   const services = await createServices();
+
+  const commands = ['sites', 'search', 'cat', 'detail', 'play', 'live', 'parse', 'fav', 'history', 'config', 'help', 'quit'];
+  const aliases: Record<string, string> = { s: 'search', d: 'detail', p: 'play', ls: 'sites', h: 'help', q: 'quit', hist: 'history', cfg: 'config' };
+
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
     terminal: true,
+    completer: (line: string) => {
+      const trimmed = line.trimStart();
+      const parts = trimmed.split(/\s+/);
+
+      if (parts.length <= 1) {
+        const allCmds = [...commands, ...Object.keys(aliases)];
+        const hits = allCmds.filter(c => c.startsWith(trimmed));
+        return [hits.length ? hits : allCmds, trimmed];
+      }
+
+      const cmd = parts[0];
+      if (cmd === 'config' || cmd === 'cfg') {
+        const sub = parts[1] ?? '';
+        const subs = ['ls', 'add', 'use', 'rm'];
+        const hits = subs.filter(s => s.startsWith(sub));
+        return [hits.map(h => `${cmd} ${h}`), line];
+      }
+
+      if (cmd === 'fav' || cmd === 'favorite') {
+        const sub = parts[1] ?? '';
+        const subs = ['add', 'rm'];
+        const hits = subs.filter(s => s.startsWith(sub));
+        return [hits.map(h => `${cmd} ${h}`), line];
+      }
+
+      if ((cmd === 'cat' || cmd === 'search' || cmd === 's') && parts.length === 2) {
+        const partial = parts[1] ?? '';
+        const siteKeys = services.siteService.listSites()
+          .filter(s => s.supported)
+          .map(s => s.key)
+          .filter(k => k.startsWith(partial));
+        return [siteKeys.map(k => `${cmd} ${k}`), line];
+      }
+
+      return [[], line];
+    },
   });
 
   let running = true;

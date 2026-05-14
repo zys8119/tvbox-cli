@@ -87,10 +87,13 @@ export class XBPQAdapter extends BaseSiteAdapter {
       const resp = await this.http.get(url, { headers: this.getHeaders() });
       return this.parseListPage(resp.data);
     } catch {
-      // Try alternative search URL pattern
-      const url2 = `${baseUrl}/vodsearch.html?wd=${encodeURIComponent(keyword)}&page=${page}`;
-      const resp = await this.http.get(url2, { headers: this.getHeaders() });
-      return this.parseListPage(resp.data);
+      try {
+        const url2 = `${baseUrl}/vodsearch.html?wd=${encodeURIComponent(keyword)}&page=${page}`;
+        const resp = await this.http.get(url2, { headers: this.getHeaders() });
+        return this.parseListPage(resp.data);
+      } catch {
+        return [];
+      }
     }
   }
 
