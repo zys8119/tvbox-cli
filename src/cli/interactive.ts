@@ -2,6 +2,8 @@ import * as readline from 'readline';
 import chalk from 'chalk';
 import { createServices, getStore, type Services } from '../index.js';
 import { formatSiteList, formatVideoList, formatCategories, formatChannels } from '../utils/format.js';
+import { fzfSelect, actionMenu, copyToClipboard } from '../utils/selector.js';
+import type { SelectOption } from '../utils/selector.js';
 import type { VideoItem } from '../types/index.js';
 
 export async function interactiveMode() {
@@ -238,7 +240,7 @@ async function handleDetail(services: Services, args: string[], lastResults: Vid
       if (signal?.aborted) return;
       const detail = await services.detailService.getDetail(item.siteKey, item.id);
       if (signal?.aborted) return;
-      printDetail(detail);
+      await printDetail(detail, services);
       return;
     }
     console.log(chalk.yellow('  序号超出范围'));
@@ -254,10 +256,10 @@ async function handleDetail(services: Services, args: string[], lastResults: Vid
   if (signal?.aborted) return;
   const detail = await services.detailService.getDetail(args[0], args[1]);
   if (signal?.aborted) return;
-  printDetail(detail);
+  await printDetail(detail, services);
 }
 
-function printDetail(detail: any) {
+async function printDetail(detail: any, services: Services) {
   console.log(chalk.bold(`\n  ${detail.name}\n`));
   if (detail.year) console.log(`  年份: ${detail.year}`);
   if (detail.area) console.log(`  地区: ${detail.area}`);
@@ -271,20 +273,63 @@ function printDetail(detail: any) {
     console.log(`  简介: ${chalk.dim(desc)}`);
   }
 
-  if (detail.playList?.length > 0) {
-    console.log(chalk.bold('\n  播放列表:'));
-    detail.playList.forEach((group: any) => {
-      console.log(chalk.cyan(`\n  [${group.name}] (${group.episodes.length}集)`));
-      const displayEps = group.episodes.slice(0, 20);
-      displayEps.forEach((ep: any, ei: number) => {
-        console.log(`    ${chalk.gray(`${ei + 1}.`)} ${ep.name} ${chalk.dim(ep.url)}`);
-      });
-      if (group.episodes.length > 20) {
-        console.log(chalk.dim(`    ... 共 ${group.episodes.length} 集`));
-      }
-    });
+  if (!detail.playList?.length) {
+    console.log(chalk.yellow('\n  无播放源\n'));
+    return;
   }
-  console.log();
+
+  // Select source line if multiple
+  let group = detail.playList[0];
+  if (detail.playList.length > 1) {
+    const sourceItems: SelectOption[] = detail.playList.map((g: any) => ({
+      label: `${g.name} (${g.episodes.length}集)`,
+      value: g.name,
+    }));
+    const sourceResult = await fzfSelect(sourceItems, {
+      prompt: '选择线路',
+      header: detail.name,
+      reverse: false,
+    });
+    if (!sourceResult) return;
+    group = detail.playList[sourceResult.index];
+  }
+
+  // Select episode with fzf (default reverse = latest first)
+  const epItems: SelectOption[] = group.episodes.map((ep: any) => ({
+    label: `${ep.name}  ${chalk.dim(ep.url)}`,
+    value: ep.url,
+    extra: ep.name,
+  }));
+
+  const epResult = await fzfSelect(epItems, {
+    prompt: `${group.name}`,
+    header: `${detail.name} | ${group.episodes.length}集 | 默认倒序(最新在前)`,
+    reverse: true,
+  });
+
+  if (!epResult) return;
+
+  // Action menu
+  const action = await actionMenu(epResult);
+  if (!action) return;
+
+  switch (action) {
+    case 'play':
+      await services.playerService.play(epResult.value);
+      break;
+    case 'copy-url':
+      copyToClipboard(epResult.value);
+      console.log(chalk.green(`  已复制 URL`));
+      break;
+    case 'copy-name':
+      copyToClipboard(group.episodes[epResult.index].name);
+      console.log(chalk.green(`  已复制名称: ${group.episodes[epResult.index].name}`));
+      break;
+    case 'copy-index':
+      copyToClipboard(String(epResult.index + 1));
+      console.log(chalk.green(`  已复制序号: ${epResult.index + 1}`));
+      break;
+  }
 }
 
 async function handlePlay(services: Services, args: string[], lastResults: VideoItem[]) {
