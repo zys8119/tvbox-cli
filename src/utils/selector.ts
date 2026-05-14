@@ -221,6 +221,7 @@ export async function actionMenu(selected: SelectResult): Promise<string | null>
   const actions: SelectOption[] = [
     { label: '▶ 播放', value: 'play' },
     { label: '🔍 解析视频资源', value: 'parse' },
+    { label: '🌐 在浏览器中打开', value: 'open' },
     { label: '📄 查看详情', value: 'detail' },
     { label: '⭐ 收藏', value: 'fav' },
     { label: '📋 复制 URL', value: 'copy-url' },
@@ -234,6 +235,21 @@ export async function actionMenu(selected: SelectResult): Promise<string | null>
   });
 
   return result?.value ?? null;
+}
+
+export function openInBrowser(url: string) {
+  try {
+    const platform = process.platform;
+    if (platform === 'darwin') {
+      execFileSync('open', [url]);
+    } else if (platform === 'win32') {
+      execFileSync('cmd', ['/c', 'start', '', url]);
+    } else {
+      execFileSync('xdg-open', [url]);
+    }
+  } catch {
+    console.log(chalk.dim(`  无法打开浏览器，URL: ${url}`));
+  }
 }
 
 export function copyToClipboard(text: string) {

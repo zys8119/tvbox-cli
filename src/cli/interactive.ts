@@ -1,7 +1,8 @@
 import * as readline from 'readline';
 import chalk from 'chalk';
 import { createServices, getStore, type Services } from '../index.js';
-import { fzfSelect, actionMenu, copyToClipboard } from '../utils/selector.js';
+import { fzfSelect, actionMenu, copyToClipboard, openInBrowser } from '../utils/selector.js';
+import { openPlayerInBrowser } from '../utils/player-html.js';
 import type { SelectOption } from '../utils/selector.js';
 import type { VideoItem } from '../types/index.js';
 
@@ -234,6 +235,9 @@ async function videoItemAction(services: Services, item: VideoItem): Promise<voi
       copyToClipboard(item.name);
       console.log(chalk.green(`  已复制: ${item.name}`));
       break;
+    case 'open':
+      openInBrowser(item.id.startsWith('http') ? item.id : `https://www.google.com/search?q=${encodeURIComponent(item.name)}`);
+      break;
   }
 }
 
@@ -398,7 +402,7 @@ async function handleDetail(services: Services, args: string[], lastResults: Vid
   await showDetail(services, args[0], args[1]);
 }
 
-// ─── Show detail with episode selection ───
+// ─── Show detail with episode selection (loops until Esc/cancel) ───
 
 async function showDetail(services: Services, siteKey: string, videoId: string, preloaded?: any) {
   const detail = preloaded ?? await (async () => {
@@ -434,42 +438,58 @@ async function showDetail(services: Services, siteKey: string, videoId: string, 
     group = detail.playList[sourceResult.index];
   }
 
-  // Select episode (reversed = latest first)
-  const epItems: SelectOption[] = group.episodes.map((ep: any) => ({
-    label: `${ep.name}  ${chalk.dim(ep.url)}`,
-    value: ep.url,
-  }));
+  // Loop: select episode → action → back to episode list
+  while (true) {
+    const epItems: SelectOption[] = group.episodes.map((ep: any) => ({
+      label: `${ep.name}  ${chalk.dim(ep.url)}`,
+      value: ep.url,
+    }));
 
-  const epResult = await fzfSelect(epItems, {
-    prompt: group.name,
-    header: `${detail.name} | ${group.episodes.length}集 | 倒序(最新在前)`,
-    reverse: true,
-  });
+    const epResult = await fzfSelect(epItems, {
+      prompt: group.name,
+      header: `${detail.name} | ${group.episodes.length}集 | 倒序(最新在前) | Esc返回`,
+      reverse: true,
+    });
 
-  if (!epResult) return;
+    if (!epResult) break; // Esc/cancel → exit loop
 
-  // Episode action menu
+    // Action menu (also loops until cancel)
+    const acted = await episodeActionMenu(services, siteKey, videoId, detail.name, group, epResult);
+    if (!acted) continue; // action cancelled → back to episode list
+  }
+}
+
+async function episodeActionMenu(
+  services: Services,
+  siteKey: string,
+  videoId: string,
+  detailName: string,
+  group: any,
+  epResult: { label: string; value: string; index: number },
+): Promise<boolean> {
   const epActions: SelectOption[] = [
-    { label: '▶ 播放', value: 'play' },
+    { label: '▶ 播放 (本地播放器)', value: 'play' },
     { label: '🔍 解析后播放', value: 'parse-play' },
+    { label: '🌐 在线播放 (浏览器 HLS)', value: 'browser-play' },
+    { label: '🌐 在浏览器中打开链接', value: 'open' },
     { label: '📋 复制播放地址', value: 'copy-url' },
     { label: '📋 复制名称', value: 'copy-name' },
   ];
 
   const action = await fzfSelect(epActions, {
     prompt: '操作',
-    header: `${group.episodes[epResult.index].name}`,
+    header: `${group.episodes[epResult.index].name} | Esc返回列表`,
     reverse: false,
   });
 
-  if (!action) return;
+  if (!action) return false; // Esc → back to episode list
 
   const epUrl = epResult.value;
+  const epName = group.episodes[epResult.index].name;
 
   switch (action.value) {
     case 'play':
-      // Record history
-      getStore().addHistory(siteKey, videoId, detail.name, group.episodes[epResult.index].name);
+      getStore().addHistory(siteKey, videoId, detailName, epName);
       await services.playerService.play(epUrl);
       break;
     case 'parse-play': {
@@ -477,7 +497,7 @@ async function showDetail(services: Services, siteKey: string, videoId: string, 
       const parsed = await services.parseService.parse(epUrl);
       if (parsed) {
         console.log(chalk.green(`  解析成功: ${parsed.url}`));
-        getStore().addHistory(siteKey, videoId, detail.name, group.episodes[epResult.index].name);
+        getStore().addHistory(siteKey, videoId, detailName, epName);
         await services.playerService.play(parsed.url, { headers: parsed.header });
       } else {
         console.log(chalk.yellow('  解析失败，尝试直接播放'));
@@ -485,15 +505,24 @@ async function showDetail(services: Services, siteKey: string, videoId: string, 
       }
       break;
     }
+    case 'browser-play':
+      getStore().addHistory(siteKey, videoId, detailName, epName);
+      openPlayerInBrowser(epUrl, `${detailName} - ${epName}`);
+      break;
+    case 'open':
+      openInBrowser(epUrl);
+      break;
     case 'copy-url':
       copyToClipboard(epUrl);
       console.log(chalk.green(`  已复制: ${epUrl}`));
       break;
     case 'copy-name':
-      copyToClipboard(group.episodes[epResult.index].name);
-      console.log(chalk.green(`  已复制: ${group.episodes[epResult.index].name}`));
+      copyToClipboard(epName);
+      console.log(chalk.green(`  已复制: ${epName}`));
       break;
   }
+
+  return true;
 }
 
 // ─── Shared: select from video list ───
@@ -506,16 +535,19 @@ async function selectFromVideoList(services: Services, items: VideoItem[]) {
     value: `${item.siteKey}::${item.id}`,
   }));
 
-  const selected = await fzfSelect(options, {
-    prompt: '选择',
-    header: `${items.length} 个结果`,
-    reverse: false,
-  });
+  // Loop: select video → action → back to list
+  while (true) {
+    const selected = await fzfSelect(options, {
+      prompt: '选择',
+      header: `${items.length} 个结果 | Esc退出`,
+      reverse: false,
+    });
 
-  if (!selected) return;
+    if (!selected) break; // Esc → exit
 
-  const item = items[selected.index];
-  await videoItemAction(services, item);
+    const item = items[selected.index];
+    await videoItemAction(services, item);
+  }
 }
 
 // ─── Play ───
