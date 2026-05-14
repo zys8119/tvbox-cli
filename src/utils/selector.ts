@@ -217,12 +217,14 @@ async function fallbackSelect(
   }
 }
 
-export async function actionMenu(selected: SelectResult): Promise<'play' | 'copy-url' | 'copy-name' | 'copy-index' | null> {
+export async function actionMenu(selected: SelectResult): Promise<string | null> {
   const actions: SelectOption[] = [
     { label: '▶ 播放', value: 'play' },
+    { label: '🔍 解析视频资源', value: 'parse' },
+    { label: '📄 查看详情', value: 'detail' },
+    { label: '⭐ 收藏', value: 'fav' },
     { label: '📋 复制 URL', value: 'copy-url' },
     { label: '📋 复制名称', value: 'copy-name' },
-    { label: '📋 复制序号', value: 'copy-index' },
   ];
 
   const result = await fzfSelect(actions, {
@@ -231,7 +233,7 @@ export async function actionMenu(selected: SelectResult): Promise<'play' | 'copy
     reverse: false,
   });
 
-  return result?.value as 'play' | 'copy-url' | 'copy-name' | 'copy-index' | null;
+  return result?.value ?? null;
 }
 
 export function copyToClipboard(text: string) {

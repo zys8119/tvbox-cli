@@ -1,7 +1,6 @@
 import * as readline from 'readline';
 import chalk from 'chalk';
 import { createServices, getStore, type Services } from '../index.js';
-import { formatSiteList, formatVideoList, formatCategories, formatChannels } from '../utils/format.js';
 import { fzfSelect, actionMenu, copyToClipboard } from '../utils/selector.js';
 import type { SelectOption } from '../utils/selector.js';
 import type { VideoItem } from '../types/index.js';
@@ -17,14 +16,12 @@ export async function interactiveMode() {
   let running = true;
   let currentAbort: AbortController | null = null;
 
-  // Ctrl+C cancels current operation instead of exiting
   rl.on('SIGINT', () => {
     if (currentAbort) {
       currentAbort.abort();
       currentAbort = null;
       console.log(chalk.yellow('\n  已取消'));
     } else {
-      // No operation running, show hint
       console.log(chalk.dim('\n  按 Ctrl+C 取消操作，输入 quit 退出'));
       rl.prompt();
     }
@@ -61,7 +58,6 @@ export async function interactiveMode() {
 
     const [cmd, ...args] = trimmed.split(/\s+/);
 
-    // Create abort controller for this operation
     currentAbort = new AbortController();
     const signal = currentAbort.signal;
 
@@ -74,7 +70,7 @@ export async function interactiveMode() {
 
         case 'sites':
         case 'ls':
-          await handleSites(services, args);
+          await handleSites(services);
           break;
 
         case 'cat':
@@ -97,7 +93,7 @@ export async function interactiveMode() {
           break;
 
         case 'live':
-          await handleLive(services, args, signal);
+          await handleLive(services, signal);
           break;
 
         case 'parse':
@@ -106,12 +102,12 @@ export async function interactiveMode() {
 
         case 'fav':
         case 'favorite':
-          handleFav(services, args, lastResults);
+          await handleFav(services, args, lastResults);
           break;
 
         case 'history':
         case 'hist':
-          handleHistory(services);
+          await handleHistory(services);
           break;
 
         case 'config':
@@ -125,7 +121,7 @@ export async function interactiveMode() {
       }
     } catch (e: any) {
       if (e.name === 'AbortError' || signal.aborted) {
-        // Already printed cancel message in SIGINT handler
+        // cancelled
       } else {
         console.log(chalk.red(`  错误: ${e.message}\n`));
       }
@@ -140,41 +136,118 @@ export async function interactiveMode() {
 
 function printHelp() {
   console.log(chalk.bold('\n  可用命令:\n'));
-  console.log('  sites [-a]              列出站点 (-a 显示全部)');
-  console.log('  cat <站点key>           浏览分类');
-  console.log('  cat <站点key> <分类id>  浏览分类内容');
-  console.log('  search <关键词>         搜索 (可简写为 s)');
-  console.log('  detail <站点key> <id>   查看详情 (可简写为 d)');
-  console.log('  detail <序号>           查看上次搜索结果的详情');
-  console.log('  play <url>              播放URL (可简写为 p)');
-  console.log('  play <序号>             播放上次搜索结果');
-  console.log('  live                    直播源');
-  console.log('  live <频道名>           播放直播频道');
-  console.log('  parse <url>             解析视频URL');
-  console.log('  fav                     查看收藏');
-  console.log('  fav add <序号>          收藏搜索结果');
-  console.log('  fav rm <序号>           取消收藏');
-  console.log('  history                 查看观看记录');
-  console.log('  config                  查看配置列表');
-  console.log('  config add <名称> <路径> 添加配置');
-  console.log('  config use <名称>       切换配置');
-  console.log('  help                    显示帮助');
-  console.log('  quit                    退出');
+  console.log('  sites               列出站点 (fzf选择 → 浏览分类)');
+  console.log('  cat <站点key>       浏览分类');
+  console.log('  search <关键词>     搜索 (可简写为 s)');
+  console.log('  detail <序号>       查看详情 (可简写为 d)');
+  console.log('  play <url>          播放URL (可简写为 p)');
+  console.log('  live                直播源');
+  console.log('  parse <url>         解析视频URL');
+  console.log('  fav                 收藏夹');
+  console.log('  fav add <序号>      收藏搜索结果');
+  console.log('  history             观看记录');
+  console.log('  config              配置管理');
+  console.log('  help                显示帮助');
+  console.log('  quit                退出');
   console.log();
 }
 
-async function handleSites(services: Services, args: string[]) {
-  const sites = services.siteService.listSites();
-  const showAll = args.includes('-a') || args.includes('--all');
+// ─── Video item action menu (shared by search/fav/history) ───
 
-  if (showAll) {
-    formatSiteList(sites);
-  } else {
-    const supported = sites.filter(s => s.supported);
-    formatSiteList(supported.map(s => ({ ...s, supported: true })));
-    console.log(chalk.dim(`  共 ${sites.length} 个站点，${supported.length} 个可用\n`));
+async function videoItemAction(services: Services, item: VideoItem): Promise<void> {
+  const result = { label: item.name, value: item.id, index: 0 };
+  const action = await actionMenu(result);
+  if (!action) return;
+
+  switch (action) {
+    case 'detail':
+      await showDetail(services, item.siteKey, item.id);
+      break;
+    case 'play': {
+      console.log(chalk.dim('  获取播放地址...'));
+      const detail = await services.detailService.getDetail(item.siteKey, item.id);
+      if (detail.playList.length > 0 && detail.playList[0].episodes.length > 0) {
+        const ep = detail.playList[0].episodes[detail.playList[0].episodes.length - 1];
+        await services.playerService.play(ep.url);
+      } else {
+        console.log(chalk.yellow('  没有可播放的内容'));
+      }
+      break;
+    }
+    case 'parse': {
+      console.log(chalk.dim('  获取视频资源...'));
+      const detail = await services.detailService.getDetail(item.siteKey, item.id);
+      await showDetail(services, item.siteKey, item.id, detail);
+      break;
+    }
+    case 'fav': {
+      const store = getStore();
+      store.addFavorite(item.siteKey, item.id, item.name, item.pic);
+      console.log(chalk.green(`  已收藏: ${item.name}`));
+      break;
+    }
+    case 'copy-url':
+      copyToClipboard(item.id);
+      console.log(chalk.green(`  已复制 ID: ${item.id}`));
+      break;
+    case 'copy-name':
+      copyToClipboard(item.name);
+      console.log(chalk.green(`  已复制: ${item.name}`));
+      break;
   }
 }
+
+// ─── Sites ───
+
+async function handleSites(services: Services) {
+  const sites = services.siteService.listSites().filter(s => s.supported);
+  const items: SelectOption[] = sites.map(s => ({
+    label: `${s.name} ${chalk.dim(`[${s.adapter}]`)}`,
+    value: s.key,
+  }));
+
+  const selected = await fzfSelect(items, {
+    prompt: '站点',
+    header: `${sites.length} 个可用站点`,
+    reverse: false,
+  });
+
+  if (!selected) return;
+
+  // Selected a site → browse its categories
+  const adapter = services.siteService.getAdapter(selected.value);
+  console.log(chalk.dim('  加载分类...'));
+  const categories = await adapter.getCategories();
+
+  if (categories.length === 0) {
+    console.log(chalk.yellow('  该站点无分类'));
+    return;
+  }
+
+  const catItems: SelectOption[] = categories.map(c => ({
+    label: c.name,
+    value: c.id,
+  }));
+
+  const catResult = await fzfSelect(catItems, {
+    prompt: '分类',
+    header: `${selected.value} - 选择分类`,
+    reverse: false,
+  });
+
+  if (!catResult) return;
+
+  console.log(chalk.dim('  加载列表...'));
+  const videos = await adapter.getList(catResult.value, 1);
+  if (videos.length === 0) {
+    console.log(chalk.yellow('  该分类暂无内容'));
+    return;
+  }
+
+  await selectFromVideoList(services, videos);
+}
+
+// ─── Categories ───
 
 async function handleCategories(services: Services, args: string[], signal?: AbortSignal) {
   if (args.length === 0) {
@@ -197,15 +270,33 @@ async function handleCategories(services: Services, args: string[], signal?: Abo
     if (signal?.aborted) return;
     const items = await adapter.getList(categoryId, page);
     if (signal?.aborted) return;
-    formatVideoList(items);
+    await selectFromVideoList(services, items);
   } else {
     console.log(chalk.dim('  加载分类...'));
     if (signal?.aborted) return;
     const categories = await adapter.getCategories();
     if (signal?.aborted) return;
-    formatCategories(categories);
+
+    const catItems: SelectOption[] = categories.map(c => ({
+      label: c.name,
+      value: c.id,
+    }));
+
+    const catResult = await fzfSelect(catItems, {
+      prompt: '分类',
+      header: siteKey,
+      reverse: false,
+    });
+
+    if (!catResult) return;
+
+    console.log(chalk.dim('  加载列表...'));
+    const items = await adapter.getList(catResult.value, 1);
+    await selectFromVideoList(services, items);
   }
 }
+
+// ─── Search ───
 
 async function handleSearch(services: Services, args: string[], signal?: AbortSignal): Promise<VideoItem[]> {
   if (args.length === 0) {
@@ -227,20 +318,26 @@ async function handleSearch(services: Services, args: string[], signal?: AbortSi
   console.log(chalk.dim(`  搜索 "${keyword}"...`));
   const results = await services.searchService.searchAll(keyword, { siteKeys, signal });
   if (signal?.aborted) return [];
-  formatVideoList(results);
+
+  if (results.length === 0) {
+    console.log(chalk.yellow('  没有找到结果'));
+    return [];
+  }
+
+  console.log(chalk.dim(`  找到 ${results.length} 个结果`));
+  await selectFromVideoList(services, results);
   return results;
 }
+
+// ─── Detail ───
 
 async function handleDetail(services: Services, args: string[], lastResults: VideoItem[], signal?: AbortSignal) {
   if (args.length === 1 && /^\d+$/.test(args[0])) {
     const idx = parseInt(args[0]) - 1;
     if (idx >= 0 && idx < lastResults.length) {
       const item = lastResults[idx];
-      console.log(chalk.dim('  加载详情...'));
       if (signal?.aborted) return;
-      const detail = await services.detailService.getDetail(item.siteKey, item.id);
-      if (signal?.aborted) return;
-      await printDetail(detail, services);
+      await showDetail(services, item.siteKey, item.id);
       return;
     }
     console.log(chalk.yellow('  序号超出范围'));
@@ -248,29 +345,32 @@ async function handleDetail(services: Services, args: string[], lastResults: Vid
   }
 
   if (args.length < 2) {
+    // No args → fzf select from last results
+    if (lastResults.length > 0) {
+      await selectFromVideoList(services, lastResults);
+      return;
+    }
     console.log(chalk.yellow('  用法: detail <站点key> <videoId> 或 detail <序号>'));
     return;
   }
 
-  console.log(chalk.dim('  加载详情...'));
   if (signal?.aborted) return;
-  const detail = await services.detailService.getDetail(args[0], args[1]);
-  if (signal?.aborted) return;
-  await printDetail(detail, services);
+  await showDetail(services, args[0], args[1]);
 }
 
-async function printDetail(detail: any, services: Services) {
-  console.log(chalk.bold(`\n  ${detail.name}\n`));
-  if (detail.year) console.log(`  年份: ${detail.year}`);
-  if (detail.area) console.log(`  地区: ${detail.area}`);
-  if (detail.type) console.log(`  类型: ${detail.type}`);
-  if (detail.actor) console.log(`  演员: ${detail.actor}`);
-  if (detail.director) console.log(`  导演: ${detail.director}`);
+// ─── Show detail with episode selection ───
+
+async function showDetail(services: Services, siteKey: string, videoId: string, preloaded?: any) {
+  const detail = preloaded ?? await (async () => {
+    console.log(chalk.dim('  加载详情...'));
+    return services.detailService.getDetail(siteKey, videoId);
+  })();
+
+  console.log(chalk.bold(`\n  ${detail.name}`));
+  if (detail.year) console.log(chalk.dim(`  ${detail.year} ${detail.area ?? ''} ${detail.type ?? ''}`));
   if (detail.description) {
-    const desc = detail.description.length > 200
-      ? detail.description.substring(0, 200) + '...'
-      : detail.description;
-    console.log(`  简介: ${chalk.dim(desc)}`);
+    const desc = detail.description.length > 150 ? detail.description.substring(0, 150) + '...' : detail.description;
+    console.log(chalk.dim(`  ${desc}`));
   }
 
   if (!detail.playList?.length) {
@@ -278,7 +378,7 @@ async function printDetail(detail: any, services: Services) {
     return;
   }
 
-  // Select source line if multiple
+  // Select source line
   let group = detail.playList[0];
   if (detail.playList.length > 1) {
     const sourceItems: SelectOption[] = detail.playList.map((g: any) => ({
@@ -286,7 +386,7 @@ async function printDetail(detail: any, services: Services) {
       value: g.name,
     }));
     const sourceResult = await fzfSelect(sourceItems, {
-      prompt: '选择线路',
+      prompt: '线路',
       header: detail.name,
       reverse: false,
     });
@@ -294,46 +394,98 @@ async function printDetail(detail: any, services: Services) {
     group = detail.playList[sourceResult.index];
   }
 
-  // Select episode with fzf (default reverse = latest first)
+  // Select episode (reversed = latest first)
   const epItems: SelectOption[] = group.episodes.map((ep: any) => ({
     label: `${ep.name}  ${chalk.dim(ep.url)}`,
     value: ep.url,
-    extra: ep.name,
   }));
 
   const epResult = await fzfSelect(epItems, {
-    prompt: `${group.name}`,
-    header: `${detail.name} | ${group.episodes.length}集 | 默认倒序(最新在前)`,
+    prompt: group.name,
+    header: `${detail.name} | ${group.episodes.length}集 | 倒序(最新在前)`,
     reverse: true,
   });
 
   if (!epResult) return;
 
-  // Action menu
-  const action = await actionMenu(epResult);
+  // Episode action menu
+  const epActions: SelectOption[] = [
+    { label: '▶ 播放', value: 'play' },
+    { label: '🔍 解析后播放', value: 'parse-play' },
+    { label: '📋 复制播放地址', value: 'copy-url' },
+    { label: '📋 复制名称', value: 'copy-name' },
+  ];
+
+  const action = await fzfSelect(epActions, {
+    prompt: '操作',
+    header: `${group.episodes[epResult.index].name}`,
+    reverse: false,
+  });
+
   if (!action) return;
 
-  switch (action) {
+  const epUrl = epResult.value;
+
+  switch (action.value) {
     case 'play':
-      await services.playerService.play(epResult.value);
+      // Record history
+      getStore().addHistory(siteKey, videoId, detail.name, group.episodes[epResult.index].name);
+      await services.playerService.play(epUrl);
       break;
+    case 'parse-play': {
+      console.log(chalk.dim('  解析中...'));
+      const parsed = await services.parseService.parse(epUrl);
+      if (parsed) {
+        console.log(chalk.green(`  解析成功: ${parsed.url}`));
+        getStore().addHistory(siteKey, videoId, detail.name, group.episodes[epResult.index].name);
+        await services.playerService.play(parsed.url, { headers: parsed.header });
+      } else {
+        console.log(chalk.yellow('  解析失败，尝试直接播放'));
+        await services.playerService.play(epUrl);
+      }
+      break;
+    }
     case 'copy-url':
-      copyToClipboard(epResult.value);
-      console.log(chalk.green(`  已复制 URL`));
+      copyToClipboard(epUrl);
+      console.log(chalk.green(`  已复制: ${epUrl}`));
       break;
     case 'copy-name':
       copyToClipboard(group.episodes[epResult.index].name);
-      console.log(chalk.green(`  已复制名称: ${group.episodes[epResult.index].name}`));
-      break;
-    case 'copy-index':
-      copyToClipboard(String(epResult.index + 1));
-      console.log(chalk.green(`  已复制序号: ${epResult.index + 1}`));
+      console.log(chalk.green(`  已复制: ${group.episodes[epResult.index].name}`));
       break;
   }
 }
 
+// ─── Shared: select from video list ───
+
+async function selectFromVideoList(services: Services, items: VideoItem[]) {
+  if (items.length === 0) return;
+
+  const options: SelectOption[] = items.map(item => ({
+    label: `${item.name} ${item.remarks ? chalk.yellow(`[${item.remarks}]`) : ''} ${chalk.cyan(`@${item.siteKey}`)}`,
+    value: `${item.siteKey}::${item.id}`,
+  }));
+
+  const selected = await fzfSelect(options, {
+    prompt: '选择',
+    header: `${items.length} 个结果`,
+    reverse: false,
+  });
+
+  if (!selected) return;
+
+  const item = items[selected.index];
+  await videoItemAction(services, item);
+}
+
+// ─── Play ───
+
 async function handlePlay(services: Services, args: string[], lastResults: VideoItem[]) {
   if (args.length === 0) {
+    if (lastResults.length > 0) {
+      await selectFromVideoList(services, lastResults);
+      return;
+    }
     console.log(chalk.yellow('  用法: play <url> 或 play <序号>'));
     return;
   }
@@ -344,75 +496,81 @@ async function handlePlay(services: Services, args: string[], lastResults: Video
     const idx = parseInt(url) - 1;
     if (idx >= 0 && idx < lastResults.length) {
       const item = lastResults[idx];
-      console.log(chalk.dim('  获取播放地址...'));
-      const detail = await services.detailService.getDetail(item.siteKey, item.id);
-
-      if (detail.playList.length > 0 && detail.playList[0].episodes.length > 0) {
-        url = detail.playList[0].episodes[0].url;
-        console.log(chalk.dim(`  播放: ${detail.name} - ${detail.playList[0].episodes[0].name}`));
-      } else {
-        console.log(chalk.yellow('  没有可播放的内容'));
-        return;
-      }
-    } else {
-      console.log(chalk.yellow('  序号超出范围'));
+      await showDetail(services, item.siteKey, item.id);
       return;
     }
-  }
-
-  const useParser = args.includes('--parse');
-  if (useParser) {
-    const result = await services.parseService.parse(url);
-    if (result) {
-      url = result.url;
-      console.log(chalk.green(`  解析成功`));
-    }
+    console.log(chalk.yellow('  序号超出范围'));
+    return;
   }
 
   await services.playerService.play(url);
 }
 
-async function handleLive(services: Services, args: string[], signal?: AbortSignal) {
+// ─── Live ───
+
+async function handleLive(services: Services, signal?: AbortSignal) {
   console.log(chalk.dim('  加载直播源...'));
   if (signal?.aborted) return;
   const channels = await services.liveService.getChannels();
   if (signal?.aborted) return;
 
   if (channels.length === 0) {
-    console.log(chalk.yellow('\n  没有可用的直播源\n'));
+    console.log(chalk.yellow('  没有可用的直播源'));
     return;
   }
 
-  if (args.length > 0) {
-    const keyword = args.join(' ');
-    const ch = channels.find(c => c.name.toLowerCase().includes(keyword.toLowerCase()));
-    if (ch) {
-      console.log(chalk.green(`\n  播放: ${ch.name}`));
-      await services.playerService.play(ch.urls[0]);
-    } else {
-      const filtered = channels.filter(c => c.name.toLowerCase().includes(keyword.toLowerCase()));
-      if (filtered.length > 0) {
-        formatChannels(filtered);
-      } else {
-        console.log(chalk.yellow(`\n  未找到频道: ${keyword}\n`));
-      }
-    }
-    return;
-  }
+  const items: SelectOption[] = channels.map(ch => ({
+    label: `${ch.name} ${chalk.dim(`[${ch.group}]`)}`,
+    value: ch.urls[0],
+  }));
 
-  formatChannels(channels);
-  console.log(chalk.dim(`  共 ${channels.length} 个频道\n`));
+  const selected = await fzfSelect(items, {
+    prompt: '频道',
+    header: `${channels.length} 个频道`,
+    reverse: false,
+  });
+
+  if (!selected) return;
+
+  const actions: SelectOption[] = [
+    { label: '▶ 播放', value: 'play' },
+    { label: '📋 复制地址', value: 'copy' },
+  ];
+
+  const action = await fzfSelect(actions, {
+    prompt: '操作',
+    header: channels[selected.index].name,
+    reverse: false,
+  });
+
+  if (action?.value === 'play') {
+    await services.playerService.play(selected.value);
+  } else if (action?.value === 'copy') {
+    copyToClipboard(selected.value);
+    console.log(chalk.green(`  已复制`));
+  }
 }
+
+// ─── Parse ───
 
 async function handleParse(services: Services, args: string[]) {
   if (args.length === 0) {
     const parses = services.parseService.getAllParses();
-    console.log(chalk.bold('\n  可用解析接口:\n'));
-    parses.forEach((p, i) => {
+    const items: SelectOption[] = parses.map(p => {
       const typeLabel = p.type === 0 ? '单接口' : p.type === 3 ? '聚合' : `类型${p.type}`;
-      console.log(`  ${chalk.gray(`${i + 1}.`)} ${p.name} ${chalk.dim(`[${typeLabel}]`)}`);
+      return { label: `${p.name} [${typeLabel}]`, value: p.url };
     });
-    console.log();
+
+    const selected = await fzfSelect(items, {
+      prompt: '解析接口',
+      header: `${parses.length} 个解析接口`,
+      reverse: false,
+    });
+
+    if (selected) {
+      copyToClipboard(selected.value);
+      console.log(chalk.green(`  已复制: ${selected.value}`));
+    }
     return;
   }
 
@@ -421,32 +579,29 @@ async function handleParse(services: Services, args: string[]) {
   const result = await services.parseService.parse(url);
 
   if (result) {
-    console.log(chalk.green(`\n  解析成功: ${result.url}\n`));
+    console.log(chalk.green(`  解析成功: ${result.url}`));
+    const actions: SelectOption[] = [
+      { label: '▶ 播放', value: 'play' },
+      { label: '📋 复制地址', value: 'copy' },
+    ];
+    const action = await fzfSelect(actions, { prompt: '操作', reverse: false });
+    if (action?.value === 'play') {
+      await services.playerService.play(result.url, { headers: result.header });
+    } else if (action?.value === 'copy') {
+      copyToClipboard(result.url);
+      console.log(chalk.green(`  已复制`));
+    }
   } else {
-    console.log(chalk.yellow('\n  解析失败\n'));
+    console.log(chalk.yellow('  解析失败'));
   }
 }
 
-function handleFav(_services: Services, args: string[], lastResults: VideoItem[]) {
+// ─── Favorites ───
+
+async function handleFav(services: Services, args: string[], lastResults: VideoItem[]) {
   const store = getStore();
 
-  if (args.length === 0) {
-    const favs = store.getFavorites();
-    if (favs.length === 0) {
-      console.log(chalk.yellow('\n  收藏夹为空\n'));
-      return;
-    }
-    console.log(chalk.bold(`\n  收藏夹 (${favs.length}):\n`));
-    favs.forEach((f, i) => {
-      console.log(`  ${chalk.gray(`${i + 1}.`)} ${f.name} ${chalk.cyan(`@${f.siteKey}`)} ${chalk.dim(f.addedAt)}`);
-    });
-    console.log();
-    return;
-  }
-
-  const subCmd = args[0];
-
-  if (subCmd === 'add' && args[1]) {
+  if (args[0] === 'add' && args[1]) {
     const idx = parseInt(args[1]) - 1;
     if (idx >= 0 && idx < lastResults.length) {
       const item = lastResults[idx];
@@ -458,37 +613,132 @@ function handleFav(_services: Services, args: string[], lastResults: VideoItem[]
     return;
   }
 
-  if (subCmd === 'rm' && args[1]) {
-    const favs = store.getFavorites();
-    const idx = parseInt(args[1]) - 1;
-    if (idx >= 0 && idx < favs.length) {
-      store.removeFavorite(favs[idx].siteKey, favs[idx].videoId);
-      console.log(chalk.green(`  已取消收藏: ${favs[idx].name}`));
-    } else {
-      console.log(chalk.yellow('  序号超出范围'));
-    }
+  const favs = store.getFavorites();
+  if (favs.length === 0) {
+    console.log(chalk.yellow('  收藏夹为空'));
     return;
   }
 
-  console.log(chalk.yellow('  用法: fav / fav add <序号> / fav rm <序号>'));
+  const items: SelectOption[] = favs.map(f => ({
+    label: `${f.name} ${chalk.cyan(`@${f.siteKey}`)} ${chalk.dim(f.addedAt)}`,
+    value: `${f.siteKey}::${f.videoId}`,
+  }));
+
+  const selected = await fzfSelect(items, {
+    prompt: '收藏',
+    header: `${favs.length} 个收藏`,
+    reverse: false,
+  });
+
+  if (!selected) return;
+
+  const fav = favs[selected.index];
+  const favActions: SelectOption[] = [
+    { label: '📄 查看详情', value: 'detail' },
+    { label: '▶ 播放最新集', value: 'play' },
+    { label: '❌ 取消收藏', value: 'remove' },
+  ];
+
+  const action = await fzfSelect(favActions, {
+    prompt: '操作',
+    header: fav.name,
+    reverse: false,
+  });
+
+  if (!action) return;
+
+  switch (action.value) {
+    case 'detail':
+      await showDetail(services, fav.siteKey, fav.videoId);
+      break;
+    case 'play': {
+      console.log(chalk.dim('  获取播放地址...'));
+      const detail = await services.detailService.getDetail(fav.siteKey, fav.videoId);
+      if (detail.playList.length > 0 && detail.playList[0].episodes.length > 0) {
+        const lastEp = detail.playList[0].episodes[detail.playList[0].episodes.length - 1];
+        store.addHistory(fav.siteKey, fav.videoId, fav.name, lastEp.name);
+        await services.playerService.play(lastEp.url);
+      } else {
+        console.log(chalk.yellow('  没有可播放的内容'));
+      }
+      break;
+    }
+    case 'remove':
+      store.removeFavorite(fav.siteKey, fav.videoId);
+      console.log(chalk.green(`  已取消收藏: ${fav.name}`));
+      break;
+  }
 }
 
-function handleHistory(_services: Services) {
+// ─── History ───
+
+async function handleHistory(services: Services) {
   const store = getStore();
   const history = store.getHistory();
 
   if (history.length === 0) {
-    console.log(chalk.yellow('\n  暂无观看记录\n'));
+    console.log(chalk.yellow('  暂无观看记录'));
     return;
   }
 
-  console.log(chalk.bold(`\n  观看记录 (${history.length}):\n`));
-  history.forEach((h, i) => {
-    const ep = h.episode ? chalk.dim(` [${h.episode}]`) : '';
-    console.log(`  ${chalk.gray(`${i + 1}.`)} ${h.name}${ep} ${chalk.cyan(`@${h.siteKey}`)} ${chalk.dim(h.watchedAt)}`);
+  const items: SelectOption[] = history.map(h => {
+    const ep = h.episode ? `[${h.episode}]` : '';
+    return {
+      label: `${h.name} ${ep} ${chalk.cyan(`@${h.siteKey}`)} ${chalk.dim(h.watchedAt)}`,
+      value: `${h.siteKey}::${h.videoId}`,
+    };
   });
-  console.log();
+
+  const selected = await fzfSelect(items, {
+    prompt: '历史',
+    header: `${history.length} 条记录`,
+    reverse: false,
+  });
+
+  if (!selected) return;
+
+  const h = history[selected.index];
+  const histActions: SelectOption[] = [
+    { label: '📄 查看详情 (继续观看)', value: 'detail' },
+    { label: '▶ 播放最新集', value: 'play' },
+    { label: '⭐ 收藏', value: 'fav' },
+    { label: '🗑 清除全部记录', value: 'clear' },
+  ];
+
+  const action = await fzfSelect(histActions, {
+    prompt: '操作',
+    header: h.name,
+    reverse: false,
+  });
+
+  if (!action) return;
+
+  switch (action.value) {
+    case 'detail':
+      await showDetail(services, h.siteKey, h.videoId);
+      break;
+    case 'play': {
+      console.log(chalk.dim('  获取播放地址...'));
+      const detail = await services.detailService.getDetail(h.siteKey, h.videoId);
+      if (detail.playList.length > 0 && detail.playList[0].episodes.length > 0) {
+        const lastEp = detail.playList[0].episodes[detail.playList[0].episodes.length - 1];
+        store.addHistory(h.siteKey, h.videoId, h.name, lastEp.name);
+        await services.playerService.play(lastEp.url);
+      }
+      break;
+    }
+    case 'fav':
+      store.addFavorite(h.siteKey, h.videoId, h.name);
+      console.log(chalk.green(`  已收藏: ${h.name}`));
+      break;
+    case 'clear':
+      store.clearHistory();
+      console.log(chalk.green('  已清除全部记录'));
+      break;
+  }
 }
+
+// ─── Config ───
 
 function handleConfig(args: string[]) {
   const store = getStore();
