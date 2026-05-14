@@ -10,7 +10,7 @@ export function categoriesCommand(program: Command) {
     .option('-p, --page <n>', '页码', '1')
     .option('-c, --category <id>', '分类ID（不指定则列出分类）')
     .action(async (siteKey: string, opts) => {
-      const { siteService } = createServices();
+      const { siteService } = await createServices();
       const adapter = siteService.getAdapter(siteKey);
 
       if (!adapter.supported) {

@@ -9,7 +9,7 @@ export function sitesCommand(program: Command) {
     .description('列出所有站点')
     .option('-a, --all', '显示所有站点（包括不支持的）')
     .action(async (opts) => {
-      const { siteService } = createServices();
+      const { siteService } = await createServices();
       const sites = siteService.listSites();
 
       if (opts.all) {

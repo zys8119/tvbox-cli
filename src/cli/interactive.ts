@@ -5,7 +5,7 @@ import { formatSiteList, formatVideoList, formatCategories, formatChannels } fro
 import type { VideoItem } from '../types/index.js';
 
 export async function interactiveMode() {
-  const services = createServices();
+  const services = await createServices();
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,

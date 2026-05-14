@@ -34,6 +34,7 @@ export class ConfigLoader {
         this.config = cached;
         return this.config;
       }
+      // No cache — cannot load synchronously, throw with guidance
       throw new Error(`远程配置未缓存，请先执行 config pull: ${this.configSource}`);
     }
 
@@ -46,6 +47,13 @@ export class ConfigLoader {
     if (this.config) return this.config;
 
     if (this.isRemote) {
+      // Try cache first
+      const cached = this.loadFromCache();
+      if (cached) {
+        this.config = cached;
+        return this.config;
+      }
+      // Fetch and cache
       this.config = await this.fetchRemote();
       this.saveToCache(this.config);
       return this.config;

@@ -8,7 +8,7 @@ export function detailCommand(program: Command) {
     .command('detail <siteKey> <videoId>')
     .description('查看视频详情')
     .action(async (siteKey: string, videoId: string) => {
-      const { detailService } = createServices();
+      const { detailService } = await createServices();
       const spinner = ora('加载详情...').start();
 
       try {

@@ -11,7 +11,7 @@ export function parseCommand(program: Command) {
     .option('-a, --all', '尝试所有解析接口')
     .option('-l, --list', '列出可用解析接口')
     .action(async (url: string, opts) => {
-      const { parseService } = createServices();
+      const { parseService } = await createServices();
 
       if (opts.list) {
         const parses = parseService.getAllParses();

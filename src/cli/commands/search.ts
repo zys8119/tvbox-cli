@@ -12,7 +12,7 @@ export function searchCommand(program: Command) {
     .option('-c, --concurrency <n>', '并发数', '5')
     .option('-t, --timeout <ms>', '超时时间(ms)', '10000')
     .action(async (keyword: string, opts) => {
-      const { searchService } = createServices();
+      const { searchService } = await createServices();
       const spinner = ora(`搜索 "${keyword}"...`).start();
 
       try {

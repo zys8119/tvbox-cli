@@ -12,7 +12,7 @@ export function liveCommand(program: Command) {
     .option('-s, --search <keyword>', '搜索频道')
     .option('-p, --play <name>', '播放指定频道')
     .action(async (opts) => {
-      const { liveService, playerService } = createServices();
+      const { liveService, playerService } = await createServices();
       const spinner = ora('加载直播源...').start();
 
       try {

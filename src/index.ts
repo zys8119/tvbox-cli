@@ -43,7 +43,7 @@ export function getStore(): Store {
   return _store;
 }
 
-export function createServices(options?: CreateServicesOptions): Services {
+export async function createServices(options?: CreateServicesOptions): Promise<Services> {
   const store = getStore();
 
   // Determine config source: explicit path > active config from store
@@ -54,6 +54,9 @@ export function createServices(options?: CreateServicesOptions): Services {
   }
 
   const config = new ConfigLoader(configSource);
+  // Auto-fetch remote config if not cached
+  await config.loadAsync();
+
   const proxy = options?.proxy ?? _globalProxy;
   const http = createHttpClient({ proxy });
 

@@ -10,7 +10,7 @@ export function playCommand(program: Command) {
     .option('--parse', '通过解析接口解析后播放')
     .option('--parse-name <name>', '指定解析接口名称')
     .action(async (url: string, opts) => {
-      const { playerService, parseService } = createServices();
+      const { playerService, parseService } = await createServices();
 
       let playUrl = url;
       let headers: Record<string, string> | undefined;
