@@ -106,3 +106,21 @@ export interface RuleConfig {
   regex?: string[];
   script?: string[];
 }
+
+export interface MultiRepoEntry {
+  url: string;
+  name: string;
+}
+
+export interface MultiRepoConfig {
+  urls: MultiRepoEntry[];
+}
+
+export function isMultiRepoConfig(data: unknown): data is MultiRepoConfig {
+  return (
+    typeof data === 'object' &&
+    data !== null &&
+    Array.isArray((data as any).urls) &&
+    !('sites' in (data as any))
+  );
+}

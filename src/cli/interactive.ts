@@ -3,6 +3,8 @@ import chalk from 'chalk';
 import { createServices, getStore, type Services } from '../index.js';
 import { fzfSelect, actionMenu, copyToClipboard, openInBrowser } from '../utils/selector.js';
 import { openPlayerInBrowser } from '../utils/player-html.js';
+import { ConfigLoader } from '../config/loader.js';
+import { createMultiRepoResolver } from '../config/multi-repo.js';
 import type { SelectOption } from '../utils/selector.js';
 import type { VideoItem } from '../types/index.js';
 
@@ -29,9 +31,19 @@ export async function interactiveMode() {
       const cmd = parts[0];
       if (cmd === 'config' || cmd === 'cfg') {
         const sub = parts[1] ?? '';
-        const subs = ['ls', 'add', 'use', 'rm'];
-        const hits = subs.filter(s => s.startsWith(sub));
-        return [hits.map(h => `${cmd} ${h}`), line];
+        if (parts.length === 2) {
+          const subs = ['ls', 'add', 'use', 'rm', 'select'];
+          const hits = subs.filter(s => s.startsWith(sub));
+          return [hits.map(h => `${cmd} ${h}`), line];
+        }
+        if (parts.length === 3 && ['use', 'rm', 'select'].includes(parts[1])) {
+          const partial = parts[2] ?? '';
+          const store = getStore();
+          const names = store.getConfigs().map(c => c.name);
+          const hits = names.filter(n => n.startsWith(partial));
+          return [hits.map(h => `${cmd} ${parts[1]} ${h}`), line];
+        }
+        return [[], line];
       }
 
       if (cmd === 'fav' || cmd === 'favorite') {
@@ -153,7 +165,7 @@ export async function interactiveMode() {
 
         case 'config':
         case 'cfg':
-          handleConfig(args);
+          await handleConfig(args);
           break;
 
         case 'clear':
@@ -817,7 +829,7 @@ async function handleHistory(services: Services) {
 
 // ─── Config ───
 
-function handleConfig(args: string[]) {
+async function handleConfig(args: string[]) {
   const store = getStore();
 
   if (args.length === 0 || args[0] === 'ls') {
@@ -828,6 +840,10 @@ function handleConfig(args: string[]) {
       const marker = c.name === active ? chalk.green('●') : ' ';
       const typeLabel = c.type === 'remote' ? chalk.cyan('[远程]') : chalk.dim('[本地]');
       console.log(`  ${marker} ${chalk.gray(`${i + 1}.`)} ${chalk.bold(c.name)} ${typeLabel} ${chalk.dim(c.path)}`);
+      const multiRepoUrl = store.getSetting(`multirepo_selected:${c.name}`);
+      if (multiRepoUrl) {
+        console.log(`     ${chalk.dim('└─ 子源:')} ${chalk.dim(multiRepoUrl)}`);
+      }
     });
     console.log();
     return;
@@ -862,7 +878,30 @@ function handleConfig(args: string[]) {
     return;
   }
 
-  console.log(chalk.yellow('  用法: config [ls] / config add <名称> <路径或URL> / config use <名称> / config rm <名称>'));
+  if (subCmd === 'select') {
+    const name = args[1];
+    const configEntry = name
+      ? store.getConfigs().find(c => c.name === name)
+      : store.getActiveConfig();
+
+    if (!configEntry) {
+      console.log(chalk.red(`  配置 "${name}" 不存在`));
+      return;
+    }
+
+    store.deleteSetting(`multirepo_selected:${configEntry.name}`);
+    try {
+      const resolver = createMultiRepoResolver(store, configEntry.name);
+      const loader = new ConfigLoader(configEntry.path, { resolveMultiRepo: resolver });
+      const config = await loader.loadAsync();
+      console.log(chalk.green(`  已选择子配置 (${config.sites?.length ?? 0} 个站点)`));
+    } catch (e: any) {
+      console.log(chalk.red(`  选择失败: ${e.message}`));
+    }
+    return;
+  }
+
+  console.log(chalk.yellow('  用法: config [ls] / config add <名称> <路径或URL> / config use <名称> / config rm <名称> / config select [名称]'));
 }
 
 function handleClear(args: string[]) {

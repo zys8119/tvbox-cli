@@ -1,5 +1,6 @@
 import { createHttpClient, type ProxyConfig } from './utils/http.js';
 import { ConfigLoader } from './config/loader.js';
+import { createMultiRepoResolver } from './config/multi-repo.js';
 import { Store } from './store/index.js';
 import { SiteService } from './services/site.service.js';
 import { SearchService } from './services/search.service.js';
@@ -53,11 +54,12 @@ export async function createServices(options?: CreateServicesOptions): Promise<S
     configSource = activeConfig.path;
   }
 
-  const config = new ConfigLoader(configSource);
+  const configName = store.getActiveConfigName();
+  const resolver = createMultiRepoResolver(store, configName);
+  const config = new ConfigLoader(configSource, { resolveMultiRepo: resolver });
   // Auto-fetch remote config if not cached
   await config.loadAsync();
 
-  const configName = store.getActiveConfigName();
   const proxy = options?.proxy ?? _globalProxy;
   const http = createHttpClient({ proxy });
 

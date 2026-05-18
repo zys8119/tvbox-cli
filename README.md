@@ -26,3 +26,18 @@ tvbox play https://xxx.m3u8
 ## 资源
 
 https://cdn.jsdelivr.net/gh/noimank/tvbox/tvboxmuti.json
+
+
+
+使用方式：
+
+
+# 添加多仓地址
+tvbox config add muti https://cdn.jsdelivr.net/gh/noimank/tvbox/tvboxmuti.json
+tvbox config use muti
+
+# 拉取时自动弹出选择（首次或无缓存时）
+tvbox config pull
+
+# 重新选择子配置
+tvbox config select

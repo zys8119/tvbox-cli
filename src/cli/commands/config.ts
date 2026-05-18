@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { getStore } from '../../index.js';
 import { ConfigLoader } from '../../config/loader.js';
+import { createMultiRepoResolver } from '../../config/multi-repo.js';
 
 export function configCommand(program: Command) {
   const cmd = program
@@ -24,6 +25,10 @@ export function configCommand(program: Command) {
         const typeLabel = c.type === 'remote' ? chalk.cyan('[远程]') : chalk.dim('[本地]');
         console.log(`${marker} ${chalk.gray(`${i + 1}.`)} ${chalk.bold(c.name)} ${typeLabel}`);
         console.log(`     ${chalk.dim(c.path)}`);
+        const multiRepoUrl = store.getSetting(`multirepo_selected:${c.name}`);
+        if (multiRepoUrl) {
+          console.log(`     ${chalk.dim('└─ 子源:')} ${chalk.dim(multiRepoUrl)}`);
+        }
       });
       console.log();
     });
@@ -86,11 +91,43 @@ export function configCommand(program: Command) {
 
       const spinner = ora(`拉取配置: ${configEntry.path}`).start();
       try {
-        const loader = new ConfigLoader(configEntry.path);
+        const resolver = createMultiRepoResolver(store, configEntry.name);
+        const loader = new ConfigLoader(configEntry.path, { resolveMultiRepo: resolver });
+        spinner.stop();
         const config = await loader.loadAsync();
-        spinner.succeed(`配置已缓存 (${config.sites.length} 个站点)`);
+        spinner.start();
+        spinner.succeed(`配置已缓存 (${config.sites?.length ?? 0} 个站点)`);
       } catch (e: any) {
         spinner.fail(`拉取失败: ${e.message}`);
+      }
+    });
+
+  cmd
+    .command('select [name]')
+    .description('重新选择多仓配置中的子配置源')
+    .action(async (name?: string) => {
+      const store = getStore();
+      const configEntry = name
+        ? store.getConfigs().find(c => c.name === name)
+        : store.getActiveConfig();
+
+      if (!configEntry) {
+        console.log(chalk.red(`\n  配置 "${name}" 不存在\n`));
+        return;
+      }
+
+      store.deleteSetting(`multirepo_selected:${configEntry.name}`);
+
+      const spinner = ora(`加载配置: ${configEntry.path}`).start();
+      try {
+        const resolver = createMultiRepoResolver(store, configEntry.name);
+        const loader = new ConfigLoader(configEntry.path, { resolveMultiRepo: resolver });
+        spinner.stop();
+        const config = await loader.loadAsync();
+        console.log(chalk.green(`\n  已选择子配置 (${config.sites?.length ?? 0} 个站点)\n`));
+      } catch (e: any) {
+        spinner.stop();
+        console.log(chalk.red(`\n  选择失败: ${e.message}\n`));
       }
     });
 }
