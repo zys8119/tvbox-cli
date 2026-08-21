@@ -27,6 +27,9 @@ tvbox play https://xxx.m3u8
 
 https://cdn.jsdelivr.net/gh/noimank/tvbox/tvboxmuti.json
 
+https://github.com/qist/tvbox
+
+https://raw.githubusercontent.com/qist/tvbox/refs/heads/master/0827.json
 
 
 使用方式：
